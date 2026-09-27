@@ -18,6 +18,7 @@ export type PublicQuestion = {
   type: "multiple" | "truefalse" | "fill";
   category: string;
   difficulty: string;
+  imageUrl: string | null;
 };
 
 export type PublicPlayer = {
@@ -40,6 +41,8 @@ export type RoomState = {
   resolved: boolean;
   /** Takım bazında toplam doğru cevap sayısı */
   scores: { 1: number; 2: number };
+  /** Sıradaki sorunun fotoğrafı — önceden yüklemek için */
+  nextImageUrl: string | null;
 };
 
 async function db() {
@@ -168,17 +171,22 @@ export const getRoomState = createServerFn({ method: "POST" })
 
     // Oyuncular, soru ve tüm cevaplar aynı anda sorgulanır — durum güncellemesi hızlanır
     const needsQuestion = currentId && room.status !== "WAITING" && room.status !== "READY";
-    const [playersRes, qRes, answersRes] = await Promise.all([
+    const upcomingId = needsQuestion ? questionIds[room.current_question + 1] ?? null : currentId;
+    const [playersRes, qRes, answersRes, nextRes] = await Promise.all([
       supabase.from("players").select("id, name, team, connected").eq("room_id", room.id).order("team"),
       needsQuestion
         ? supabase
             .from("questions")
-            .select("question, option_a, option_b, option_c, option_d, question_type, category, difficulty")
+            .select("question, option_a, option_b, option_c, option_d, question_type, category, difficulty, image_url")
             .eq("id", currentId)
             .maybeSingle()
         : Promise.resolve({ data: null }),
       supabase.from("answers").select("player_id, question_id, answer_text, is_correct, created_at").eq("room_id", room.id),
+      upcomingId
+        ? supabase.from("questions").select("image_url").eq("id", upcomingId).maybeSingle()
+        : Promise.resolve({ data: null }),
     ]);
+    const nextImageUrl: string | null = (nextRes as any).data?.image_url ?? null;
 
     const players = playersRes.data;
     const allAnswers = (answersRes.data ?? []) as Array<{
@@ -205,6 +213,7 @@ export const getRoomState = createServerFn({ method: "POST" })
             : { A: q.option_a, B: q.option_b, C: q.option_c, D: q.option_d },
         category: q.category,
         difficulty: q.difficulty,
+        imageUrl: q.image_url ?? null,
       };
       const currentAnswers = allAnswers.filter((a) => a.question_id === currentId);
       answeredIds = currentAnswers.map((a) => a.player_id);
