@@ -264,6 +264,7 @@ export const getRoomState = createServerFn({ method: "POST" })
       me,
       resolved,
       scores,
+      nextImageUrl,
     };
   });
 
