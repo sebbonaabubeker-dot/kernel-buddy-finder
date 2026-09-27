@@ -136,6 +136,7 @@ export type Database = {
           created_at: string
           difficulty: string
           id: string
+          image_url: string | null
           option_a: string
           option_b: string
           option_c: string
@@ -152,6 +153,7 @@ export type Database = {
           created_at?: string
           difficulty?: string
           id?: string
+          image_url?: string | null
           option_a: string
           option_b: string
           option_c: string
@@ -168,6 +170,7 @@ export type Database = {
           created_at?: string
           difficulty?: string
           id?: string
+          image_url?: string | null
           option_a?: string
           option_b?: string
           option_c?: string

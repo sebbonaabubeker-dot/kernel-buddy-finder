@@ -11,6 +11,7 @@ export type QuestionRow = {
   question_type: string;
   category: string;
   difficulty: string;
+  image_url: string | null;
 };
 
 export type QuestionSetRow = {
@@ -116,7 +117,7 @@ export const listQuestions = createServerFn({ method: "POST" })
     let query = supabase
       .from("questions")
       .select(
-        "id, question, option_a, option_b, option_c, option_d, correct_answer_text, question_type, category, difficulty",
+        "id, question, option_a, option_b, option_c, option_d, correct_answer_text, question_type, category, difficulty, image_url",
       )
       .order("created_at", { ascending: true });
     if (data.setId) query = query.eq("set_id", data.setId);
@@ -137,9 +138,19 @@ type QuestionInput = {
   correct_answer: string;
   question_type?: string;
   category?: string | undefined;
+  image_url?: string | null;
 };
 
+function cleanImage(v: unknown): string | null {
+  const s = typeof v === "string" ? v.trim() : "";
+  return s.startsWith("https://") ? s.slice(0, 2000) : null;
+}
+
 function clean(data: QuestionInput): QuestionInput {
+  return { ...cleanBase(data), image_url: cleanImage(data.image_url) };
+}
+
+function cleanBase(data: QuestionInput): QuestionInput {
   const type = ["multiple", "truefalse", "fill"].includes(String(data.question_type))
     ? String(data.question_type)
     : "multiple";
@@ -228,7 +239,7 @@ export const duplicateQuestion = createServerFn({ method: "POST" })
     const supabase = await db();
     const { data: src, error: readError } = await supabase
       .from("questions")
-      .select("question, option_a, option_b, option_c, option_d, correct_answer_text, question_type, category, difficulty, time_limit, set_id")
+      .select("question, option_a, option_b, option_c, option_d, correct_answer_text, question_type, category, difficulty, time_limit, set_id, image_url")
       .eq("id", data.id)
       .maybeSingle();
     if (readError || !src) throw new Error("Soru bulunamadı");
@@ -266,4 +277,27 @@ export const deleteQuestion = createServerFn({ method: "POST" })
     const { error } = await supabase.from("questions").delete().eq("id", data.id);
     if (error) throw new Error("Soru silinemedi");
     return { ok: true };
+  });
+
+export const uploadQuestionImage = createServerFn({ method: "POST" })
+  .inputValidator((data: { base64: string; contentType: string }) => {
+    const contentType = ["image/webp", "image/jpeg", "image/png"].includes(data.contentType) ? data.contentType : "image/jpeg";
+    const base64 = String(data.base64 || "");
+    if (!base64 || base64.length > 7_000_000) throw new Error("Fotoğraf çok büyük");
+    return { base64, contentType };
+  })
+  .handler(async ({ data }) => {
+    const supabase = await db();
+    const ext = data.contentType.split("/")[1];
+    const path = `${crypto.randomUUID()}.${ext}`;
+    const bytes = Uint8Array.from(atob(data.base64), (c) => c.charCodeAt(0));
+    const { error } = await supabase.storage
+      .from("question-images")
+      .upload(path, bytes, { contentType: data.contentType, cacheControl: "31536000", upsert: false });
+    if (error) throw new Error("Fotoğraf yüklenemedi");
+    const { data: signed, error: signErr } = await supabase.storage
+      .from("question-images")
+      .createSignedUrl(path, 60 * 60 * 24 * 365 * 10);
+    if (signErr || !signed) throw new Error("Fotoğraf bağlantısı oluşturulamadı");
+    return { url: signed.signedUrl as string };
   });

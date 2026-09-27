@@ -8,6 +8,9 @@ import {
   CirclePlay,
   Copy,
   FileQuestion,
+  ImagePlus,
+  Loader2,
+  X,
   Plus,
   Save,
   Trash2,
@@ -23,6 +26,7 @@ import {
   listQuestions,
   renameSet,
   updateQuestion,
+  uploadQuestionImage,
   type QuestionRow,
 } from "@/lib/questions.functions";
 
@@ -55,6 +59,7 @@ const empty = {
   correct_answer: "",
   question_type: "multiple",
   extra_answers: [] as string[],
+  image_url: "",
 };
 
 const MAX_FILL_ANSWERS = 8;
@@ -76,6 +81,8 @@ function QuestionsPage() {
   const edit = useServerFn(updateQuestion);
   const remove = useServerFn(deleteQuestion);
   const copy = useServerFn(duplicateQuestion);
+  const uploadImage = useServerFn(uploadQuestionImage);
+  const [uploading, setUploading] = useState(false);
   const rename = useServerFn(renameSet);
   const create = useServerFn(createRoom);
 
@@ -138,6 +145,7 @@ function QuestionsPage() {
         extra_answers: isFill
           ? [question.option_b, question.option_c, ...parseExtras(question.correct_answer)].filter((v) => v.trim())
           : [],
+        image_url: question.image_url ?? "",
       };
       setForm(loaded);
       lastSavedRef.current = JSON.stringify(loaded);
@@ -511,6 +519,50 @@ function QuestionsPage() {
               })}
             </div>
 
+            <div className="mb-4">
+              {form.image_url ? (
+                <div className="relative mx-auto flex h-48 w-full items-center justify-center overflow-hidden rounded-xl border border-studio-line bg-studio-elevated/60 sm:h-56">
+                  <img src={form.image_url} alt="Soru fotoğrafı" className="h-full w-full object-contain" />
+                  <button
+                    type="button"
+                    aria-label="Fotoğrafı kaldır"
+                    onClick={() => set("image_url", "")}
+                    className="absolute right-2 top-2 rounded-full bg-studio-bg/80 p-1.5 text-studio-ink hover:bg-studio-bg"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <label className="flex h-32 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-studio-line bg-studio-elevated/40 text-studio-muted hover:border-studio-yellow hover:text-studio-ink">
+                  {uploading ? <Loader2 className="h-7 w-7 animate-spin" /> : <ImagePlus className="h-7 w-7" />}
+                  <span className="text-sm font-bold">{uploading ? "Yükleniyor..." : "Fotoğraf ekle (isteğe bağlı)"}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={uploading}
+                    onChange={async (event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (!file) return;
+                      setUploading(true);
+                      setError(null);
+                      try {
+                        const { base64, contentType } = await compressImage(file);
+                        const { url } = await uploadImage({ data: { base64, contentType } });
+                        await new Promise<void>((r) => { const i = new Image(); i.onload = i.onerror = () => r(); i.src = url; });
+                        set("image_url", url);
+                      } catch (caught) {
+                        setError(caught instanceof Error ? caught.message : "Fotoğraf yüklenemedi");
+                      } finally {
+                        setUploading(false);
+                      }
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+
             <div>
               <label htmlFor="question-text" className="mb-2 block text-xs font-bold uppercase text-studio-muted">
                 Soru metni
@@ -671,4 +723,22 @@ function QuestionsPage() {
       </div>
     </main>
   );
+}
+
+/** Fotoğrafı küçültüp WebP'ye çevirir — oyunda anında açılsın diye */
+async function compressImage(file: File): Promise<{ base64: string; contentType: string }> {
+  const bitmap = await createImageBitmap(file);
+  const max = 1280;
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  let blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/webp", 0.8));
+  if (!blob || blob.type !== "image/webp") blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.82));
+  if (!blob) throw new Error("Fotoğraf işlenemedi");
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return { base64: btoa(bin), contentType: blob.type };
 }
